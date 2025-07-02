@@ -1,3 +1,4 @@
+
 # %%
 import pandas as pd
 import numpy as np
@@ -218,22 +219,18 @@ def evaluate_model(model, X_test, y_test):
     print(classification_report(y_test, y_pred))
 
 def log_and_register_model(model, model_name, X_test, y_test):
-    # Step 1: Evaluate
     evaluate_model(model, X_test, y_test)
 
-    # Step 2: Get run and experiment
     run = mlflow.active_run()
     run_id = run.info.run_id
     experiment = mlflow.get_experiment(run.info.experiment_id)
     artifact_path = f"{model_name}_model"
 
-    # Step 3: Log model to MLflow but don't register yet
     mlflow.sklearn.log_model(
         sk_model=model,
         artifact_path=artifact_path
     )
 
-    # Step 4: Register using MlflowClient (to capture version)
     client = MlflowClient()
     model_uri = f"runs:/{run_id}/{artifact_path}"
     registered_model = client.create_model_version(
@@ -244,10 +241,8 @@ def log_and_register_model(model, model_name, X_test, y_test):
     version = registered_model.version
     unique_model_name = f"{model_name}_v{version}"
 
-    # Step 5: Save locally with versioned name
     joblib.dump(model, f"{unique_model_name}_pipeline.pkl")
 
-    # Step 6: Optional - Move to Production stage
     client.transition_model_version_stage(
         name=model_name,
         version=version,
@@ -262,10 +257,7 @@ def log_and_register_model(model, model_name, X_test, y_test):
         "experiment_name": experiment.name
     }
 
-
-# Usage example
 if __name__ == "__main__":
-    # Parameters
     TARGET_COL = 'Personal Loan'
     PARAM_GRID = {
         'rf__n_estimators': [100, 200],
@@ -273,37 +265,27 @@ if __name__ == "__main__":
         'rf__min_samples_split': [2, 5],
         'rf__min_samples_leaf': [1, 2]
     }
-
-    # Split the data
     X_train, X_test, y_train, y_test = split_data(df, TARGET_COL)
-
-    # Create pipeline
 
 # %%
 from sklearn.linear_model import LogisticRegression
 
-# Define a pipeline for logistic regression
 def create_logistic_pipeline():
     return Pipeline([
         ('scaler', StandardScaler()),
-        ('lr', LogisticRegression(solver='liblinear'))  # liblinear is good for small binary datasets
+        ('lr', LogisticRegression(solver='liblinear')) 
     ])
 
-# Define a hyperparameter grid for logistic regression
 LOGISTIC_PARAM_GRID = {
     'lr__C': [0.01, 0.1, 1, 10],
     'lr__penalty': ['l1', 'l2']
 }
 
-# Usage example for logistic regression
 if __name__ == "__main__":
-    # Parameters
     TARGET_COL = 'Personal Loan'
 
-    # Split the data
     X_train, X_test, y_train, y_test = split_data(df, TARGET_COL)
 
-    # Create logistic regression pipeline
     models_config = {
     "RandomForest": {
         "pipeline": create_pipeline(),
@@ -314,6 +296,11 @@ if __name__ == "__main__":
         "param_grid": LOGISTIC_PARAM_GRID
     }
     }
+
+    best_model = None
+    best_model_name = None
+    best_auc = 0.0
+    best_model_info = {}
 
     for model_name, config in models_config.items():
         with mlflow.start_run(run_name=f"{model_name}_Classifier"):
@@ -326,30 +313,34 @@ if __name__ == "__main__":
             mlflow.log_params(grid_search.best_params_)
             mlflow.log_metric("Best CV AUC", grid_search.best_score_)
 
-            model_info = log_and_register_model(grid_search.best_estimator_, model_name, X_test, y_test)
+            y_pred = grid_search.best_estimator_.predict(X_test)
+            y_proba = grid_search.best_estimator_.predict_proba(X_test)[:, 1]
+            test_auc = roc_auc_score(y_test, y_proba)
+            mlflow.log_metric("Test AUC", test_auc)
 
-            print("\nFINAL MODEL SUMMARY")
-            print(f"Model Name         : {model_info['model_name']}")
-            print(f"Unique Model Name  : {model_info['unique_model_name']}")
-            print(f"Version            : {model_info['version']}")
-            print(f"Run ID             : {model_info['run_id']}")
-            print(f"Experiment Name    : {model_info['experiment_name']}")
+            print(f"\nModel: {model_name} - Test AUC: {test_auc:.4f}")
 
+            if test_auc > best_auc:
+                best_auc = test_auc
+                best_model = grid_search.best_estimator_
+                best_model_name = model_name
+                model_info = log_and_register_model(best_model, best_model_name, X_test, y_test)
 
-            
+    print(f"\nBest Model Based on Test AUC: {best_model_name} ({best_auc:.4f})")
 
+    print("\nFINAL BEST MODEL SUMMARY")
+    print(f"Model Name         : {model_info['model_name']}")
+    print(f"Unique Model Name  : {model_info['unique_model_name']}")
+    print(f"Version            : {model_info['version']}")
+    print(f"Run ID             : {model_info['run_id']}")
+    print(f"Experiment Name    : {model_info['experiment_name']}")
 
-    # Evaluate the logistic model
 
 
 # %%
 import joblib
-# Save best model after training
 joblib.dump(grid_search.best_estimator_, "model_pipeline.pkl")
-print("✅ Saved best model as model_pipeline.pkl")
+print("Saved best model as model_pipeline.pkl")
   
-
-# %%
-
 
 
